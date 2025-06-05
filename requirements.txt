@@ -1,0 +1,12 @@
+django
+celery
+redis
+langchain
+langchain-community
+langchain-openai
+openrouter
+djangorestframework
+drf-spectacular
+django-celery-results
+flower
+pytz
