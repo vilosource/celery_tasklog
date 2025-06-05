@@ -7,6 +7,7 @@ from django.utils.decorators import method_decorator
 from celery import current_app
 from django_celery_results.models import TaskResult
 from django.conf import settings
+from asgiref.sync import sync_to_async
 from .models import TaskLogLine
 from .serializers import (
     TaskListSerializer,
@@ -214,8 +215,12 @@ async def task_log_stream(request, task_id):
         pubsub = redis_client.pubsub()
         await pubsub.subscribe(channel_name)
 
-        # Send existing logs first
-        existing_logs = TaskLogLine.objects.filter(task_id=task_id).order_by("id")
+        # Send existing logs first. Querying the database from an async
+        # context requires using ``sync_to_async`` to avoid Django's
+        # SynchronousOnlyOperation error.
+        existing_logs = await sync_to_async(list)(
+            TaskLogLine.objects.filter(task_id=task_id).order_by("id")
+        )
         for log in existing_logs:
             message = {
                 'type': 'new_log',
