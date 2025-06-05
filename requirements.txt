@@ -13,3 +13,5 @@ pytz
 gunicorn
 uvicorn[standard]
 psycopg2-binary
+aiohttp
+requests
