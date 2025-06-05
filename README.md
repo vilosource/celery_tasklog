@@ -124,4 +124,26 @@ Environment variables are loaded from `.env`, keeping the project [12‑factor](
    ```
 3. Access Flower at [http://localhost:5555](http://localhost:5555) and the Django site at [http://localhost:8000](http://localhost:8000).
 
+## Linting
+
+Run `flake8` to check coding style:
+
+```bash
+poetry run flake8
+```
+
+## Testing SSE
+
+With the stack running and a task executing, you can monitor log events using the provided client:
+
+```bash
+python tests/test_sse_client.py
+```
+
+Enter the task ID when prompted to see events streamed from the server. Full automated tests are executed with `pytest`:
+
+```bash
+poetry run pytest
+```
+
 For more details see the full [CeleryTaskLogSpec](docs/CeleryTaskLogSpec.md).

@@ -8,20 +8,24 @@ from celery import current_app
 from django_celery_results.models import TaskResult
 from django.conf import settings
 from .models import TaskLogLine
-from .serializers import TaskListSerializer, TaskDetailSerializer, TaskLogLineSerializer
+from .serializers import (
+    TaskListSerializer,
+    TaskDetailSerializer,
+    TaskLogLineSerializer,
+)
 import json
 import time
-import threading
+import asyncio
 import logging
-import redis
+import redis.asyncio as aioredis
 
 # Import the global SSE connections dictionary and lock from signals.py
-from .signals import sse_connections, sse_lock
+
 
 logger = logging.getLogger(__name__)
 
 # Redis client for streaming log updates
-redis_client = redis.Redis.from_url(settings.CELERY_BROKER_URL)
+redis_client = aioredis.from_url(settings.CELERY_BROKER_URL)
 
 
 class TaskListView(generics.ListAPIView):
@@ -194,51 +198,24 @@ def trigger_demo_task(request):
 
 
 @csrf_exempt
-def task_log_stream(request, task_id):
-    """SSE endpoint for streaming task logs"""
-    import queue
-    
+async def task_log_stream(request, task_id):
+    """SSE endpoint for streaming task logs using async Redis pub/sub."""
+
     logger.info(f"SSE connection requested for task {task_id}")
-    logger.info(f"Current registered SSE connections: {list(sse_connections.keys())}")
-    
-    def event_stream():
+
+    async def event_stream():
         logger.info(f"Starting SSE stream for task {task_id}")
-        # Send initial connection message
-        yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id})}\n\n".encode('utf-8')
 
-        # Register this connection
-        connection_queue = queue.Queue()
-        pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
+        # Initial connected message
+        yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id})}\n\n"
+
+        # Subscribe to Redis channel for this task
         channel_name = f"tasklog:{task_id}"
-        pubsub.subscribe(channel_name)
-        stop_event = threading.Event()
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(channel_name)
 
-        def redis_listener():
-            for message in pubsub.listen():
-                if stop_event.is_set():
-                    break
-                if message.get('type') == 'message':
-                    try:
-                        data = json.loads(message['data'])
-                        connection_queue.put_nowait(data)
-                    except Exception as e:
-                        logger.error(f"Error processing pubsub message: {e}")
-
-        listener_thread = threading.Thread(target=redis_listener, daemon=True)
-        listener_thread.start()
-        with sse_lock:
-            if task_id not in sse_connections:
-                sse_connections[task_id] = []
-
-            # Create a queue for this connection
-            sse_connections[task_id].append(connection_queue)
-            logger.info(f"Registered new SSE connection for task {task_id}, connections: {len(sse_connections[task_id])}")
-        
-        # Load existing logs and add them to the queue to ensure client has the latest
-        existing_logs = TaskLogLine.objects.filter(task_id=task_id).order_by('id')
-        logger.info(f"Found {existing_logs.count()} existing logs for task {task_id}")
-        
-        # Add existing logs to queue if there are any
+        # Send existing logs first
+        existing_logs = TaskLogLine.objects.filter(task_id=task_id).order_by("id")
         for log in existing_logs:
             message = {
                 'type': 'new_log',
@@ -246,51 +223,30 @@ def task_log_stream(request, task_id):
                 'timestamp': log.timestamp.isoformat(),
                 'stream': log.stream,
                 'message': log.message,
-                'task_id': log.task_id
+                'task_id': log.task_id,
             }
-            connection_queue.put_nowait(message)
-        
+            yield f"data: {json.dumps(message)}\n\n"
+
         try:
-            # Keep connection alive and send queued messages
             while True:
-                try:
-                    # Wait for new log messages (with timeout for keepalive)
-                    message = connection_queue.get(timeout=5)  # 5 second timeout for faster keepalive
-                    logger.debug(f"Sending message: {message['type']}")
-                    yield f"data: {json.dumps(message)}\n\n".encode('utf-8')
-                except queue.Empty:
-                    # Send keepalive
-                    logger.debug(f"Sending keepalive for task {task_id}")
-                    yield f"data: {json.dumps({'type': 'keepalive'})}\n\n".encode('utf-8')
-                except Exception as e:
-                    logger.error(f"SSE error for task {task_id}: {e}")
-                    break
-        finally:
-            # Clean up connection
-            logger.info(f"Cleaning up SSE connection for task {task_id}")
-            stop_event.set()
-            try:
-                pubsub.close()
-            except Exception:
-                pass
-            listener_thread.join(timeout=1)
-            with sse_lock:
-                if task_id in sse_connections:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5)
+                if message:
                     try:
-                        sse_connections[task_id].remove(connection_queue)
-                        logger.info(f"Removed connection, remaining: {len(sse_connections[task_id])}")
-                        if not sse_connections[task_id]:
-                            del sse_connections[task_id]
-                            logger.info(f"No more connections for task {task_id}, deleted entry")
-                    except ValueError:
-                        logger.error(f"Failed to remove connection from {task_id}")
-                        pass
-    
-    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-    response['Cache-Control'] = 'no-cache'
-    response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
-    response['Access-Control-Allow-Origin'] = '*'
-    response['Access-Control-Allow-Headers'] = 'Cache-Control'
+                        data = json.loads(message["data"])
+                        yield f"data: {json.dumps(data)}\n\n"
+                    except Exception as exc:
+                        logger.error("Error processing pubsub message: %s", exc)
+                else:
+                    yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+        finally:
+            await pubsub.unsubscribe(channel_name)
+            await pubsub.close()
+
+    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
+    response["Access-Control-Allow-Origin"] = "*"
+    response["Access-Control-Allow-Headers"] = "Cache-Control"
     return response
 
 

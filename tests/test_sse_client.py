@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-import requests
 import json
+import os
+import requests
 import time
 
 def test_sse_connection(task_id):
@@ -8,11 +9,12 @@ def test_sse_connection(task_id):
     Test SSE connection for a specific task ID
     """
     print(f"Testing SSE connection for task {task_id}")
-    headers = {'Accept': 'text/event-stream'}
+    base_url = os.environ.get("SSE_BASE_URL", "http://localhost:8000")
+    headers = {"Accept": "text/event-stream"}
     response = requests.get(
-        f'http://localhost:8000/tasklog/sse/task/{task_id}/',
+        f"{base_url}/tasklog/sse/task/{task_id}/",
         headers=headers,
-        stream=True
+        stream=True,
     )
     
     if response.status_code != 200:
@@ -46,3 +48,4 @@ if __name__ == "__main__":
         test_sse_connection(task_id)
     except KeyboardInterrupt:
         print("\nExiting SSE test client")
+
