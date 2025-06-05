@@ -7,7 +7,6 @@ app_name = 'celery_tasklog'
 api_urlpatterns = [
     path('tasks/', api_views.TaskListView.as_view(), name='task_list'),
     path('tasks/<str:task_id>/', api_views.TaskDetailView.as_view(), name='task_detail'),
-    path('trigger-demo/', api_views.trigger_demo_task, name='trigger_demo_task'),
 ]
 
 # SSE URLs for real-time log streaming (reusable by any app)
