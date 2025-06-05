@@ -74,6 +74,56 @@ Configuration options are exposed through environment variables as described in 
    ```
 4. Start the Celery worker alongside your Django server. Example commands can be found in the [verification steps](docs/CeleryTaskLogSpec.md).
 
+## Integration Guide
+
+Follow these steps to integrate the app into your own Django project:
+
+1. **Install and configure apps**
+   ```python
+   INSTALLED_APPS = [
+       # ...
+       'celery_tasklog',
+   ]
+
+   MIDDLEWARE = [
+       # ...
+       'celery_tasklog.middleware.CeleryTaskLogMiddleware',
+   ]
+   ```
+
+2. **Include the URLs** in your project `urls.py`:
+   ```python
+   urlpatterns = [
+       path('tasklog/', include('celery_tasklog.urls')),
+   ]
+   ```
+
+3. **Run migrations** to create the `TaskLogLine` table:
+   ```bash
+   python manage.py migrate
+   ```
+
+4. **Use the task base class** for any Celery task you want to capture:
+   ```python
+   from celery_tasklog.tasks import TerminalLoggingTask
+
+   @shared_task(base=TerminalLoggingTask, bind=True)
+   def my_task(self):
+       print('This output will be streamed!')
+   ```
+
+5. **Consume log events** in the browser using Server‑Sent Events (SSE):
+   ```javascript
+   const taskId = '<task-id>'; // obtained from API
+   const es = new EventSource(`/tasklog/sse/task/${taskId}/`);
+   es.onmessage = (e) => {
+       const data = JSON.parse(e.data);
+       if (data.type === 'new_log') {
+           console.log(`[${data.stream}] ${data.message}`);
+       }
+   };
+   ```
+
 ## Docker deployment
 
 A Dockerfile is provided following the structure from the specification:

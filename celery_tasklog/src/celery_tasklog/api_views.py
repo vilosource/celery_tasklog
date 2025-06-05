@@ -1,9 +1,8 @@
-from rest_framework import generics, status
+from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
 from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
 from celery import current_app
 from django_celery_results.models import TaskResult
 from django.conf import settings
@@ -15,8 +14,6 @@ from .serializers import (
     TaskLogLineSerializer,
 )
 import json
-import time
-import asyncio
 import logging
 import redis.asyncio as aioredis
 
@@ -153,49 +150,6 @@ class TaskDetailView(generics.RetrieveAPIView):
         return Response(serializer.data)
 
 
-@csrf_exempt
-@api_view(['POST'])
-def trigger_demo_task(request):
-    """
-    Optional API endpoint to trigger demo tasks.
-    This function attempts to import and trigger demo tasks if available.
-    If demo tasks are not available, it returns an error.
-    """
-    try:
-        # Try to import demo tasks
-        from demo.tasks import demo_long_task, demo_failing_task, demo_quick_task
-    except ImportError:
-        return Response({
-            'error': 'Demo tasks not available. Make sure the demo app is installed and configured.'
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    task_type = request.data.get('task_type', 'long')
-    duration = request.data.get('duration', 60)
-    
-    try:
-        duration = int(duration)
-        if duration < 1 or duration > 300:  # Limit between 1-300 seconds
-            duration = 60
-    except (ValueError, TypeError):
-        duration = 60
-
-    # Start the appropriate demo task
-    if task_type == 'failing':
-        result = demo_failing_task.delay()
-        message = 'Demo failing task started'
-    elif task_type == 'quick':
-        result = demo_quick_task.delay()
-        message = 'Demo quick task started'
-    else:  # default to long task
-        result = demo_long_task.delay(duration)
-        message = f'Demo long task started with duration {duration} seconds'
-
-    return Response({
-        'task_id': result.id,
-        'task_type': task_type,
-        'duration': duration if task_type == 'long' else None,
-        'message': message
-    })
 
 
 @csrf_exempt

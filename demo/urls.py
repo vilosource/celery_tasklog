@@ -7,4 +7,5 @@ urlpatterns = [
     # Demo pages
     path('', views.demo_home, name='demo_home'),
     path('task/<str:task_id>/', views.demo_task_detail, name='demo_task_detail'),
+    path('api/trigger-demo/', views.trigger_demo_task, name='trigger_demo_task'),
 ]
