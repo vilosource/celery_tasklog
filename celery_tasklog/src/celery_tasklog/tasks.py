@@ -1,16 +1,8 @@
-import random
-import time
-from contextlib import contextmanager
-from datetime import datetime
-import pytz
 import sys
+from contextlib import contextmanager
 
-from celery import Task, shared_task
-from celery.utils.log import get_task_logger
-
+from celery import Task
 from .models import TaskLogLine
-
-logger = get_task_logger(__name__)
 
 
 class DBLogWriter:
@@ -54,68 +46,3 @@ class TerminalLoggingTask(Task):
         task_id = self.request.id
         with capture_output(task_id):
             return self.run(*args, **kwargs)
-
-
-@shared_task(bind=True, base=TerminalLoggingTask, name='celery_tasklog.tasks.timed_print_task')
-def timed_print_task(self):
-    try:
-        task_id = self.request.id
-        TaskLogLine.objects.create(task_id=task_id, stream='stdout', message=f"Task {task_id} started manually")
-        logger.info(f"Starting timed_print_task with ID: {task_id}")
-
-        self.update_state(state='STARTED', meta={'progress': 0})
-
-        duration = random.randint(5, 10)
-        end_time = time.time() + duration
-
-        TaskLogLine.objects.create(
-            task_id=task_id,
-            stream='stdout',
-            message=f"Task will run for approximately {duration} seconds"
-        )
-
-        iteration = 0
-        total_iterations = duration * 2
-
-        while time.time() < end_time:
-            iteration += 1
-            timestamp = datetime.now(tz=pytz.UTC).isoformat()
-
-            progress = min(int((iteration / total_iterations) * 100), 99)
-            self.update_state(state='PROGRESS', meta={'progress': progress})
-
-            TaskLogLine.objects.create(
-                task_id=task_id,
-                stream='stdout',
-                message=f"Iteration {iteration}: {timestamp} (Progress: {progress}%)"
-            )
-
-            logger.info(f"Iteration {iteration}: {timestamp} (Progress: {progress}%)")
-
-            time.sleep(random.uniform(0.5, 1))
-
-        TaskLogLine.objects.create(
-            task_id=task_id,
-            stream='stdout',
-            message=f"Task {task_id} completed successfully after {iteration} iterations"
-        )
-        logger.info(f"Task {task_id} completed successfully after {iteration} iterations")
-
-        return {
-            "status": "done",
-            "iterations": iteration,
-            "duration": duration
-        }
-    except Exception as e:
-        error_msg = f"Error in timed_print_task: {str(e)}"
-        logger.error(error_msg)
-        try:
-            task_id = getattr(self.request, 'id', 'unknown')
-            TaskLogLine.objects.create(
-                task_id=task_id,
-                stream='stderr',
-                message=error_msg
-            )
-        except Exception as inner_e:
-            logger.error(f"Failed to log error to database: {str(inner_e)}")
-        raise

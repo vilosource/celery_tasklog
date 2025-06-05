@@ -1,10 +1,11 @@
 from django.shortcuts import render
-from .tasks import long_running_task
 
 
-def demo_view(request):
-    if request.method == 'POST':
-        seconds = int(request.POST.get('seconds', 5))
-        long_running_task.delay(seconds)
-        return render(request, 'demo/demo_complete.html', {'seconds': seconds})
-    return render(request, 'demo/demo_form.html')
+def demo_home(request):
+    """Demo home page with task trigger form and task list"""
+    return render(request, 'demo/demo_home.html')
+
+
+def demo_task_detail(request, task_id):
+    """Demo task detail page with real-time logs"""
+    return render(request, 'demo/demo_task_detail.html', {'task_id': task_id})

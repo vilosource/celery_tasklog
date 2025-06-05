@@ -10,3 +10,6 @@ drf-spectacular
 django-celery-results
 flower
 pytz
+gunicorn
+uvicorn[standard]
+psycopg2-binary

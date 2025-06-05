@@ -5,12 +5,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml* poetry.lock* ./
-RUN pip install --no-cache-dir poetry \
-    && poetry install --no-interaction --no-ansi --no-root
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY . /app/
+# Install Python dependencies
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-RUN poetry run python manage.py collectstatic --noinput 2>/dev/null || true
-
-CMD ["poetry", "run", "gunicorn", "djproject.wsgi:application", "-b", "0.0.0.0:8000"]
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
