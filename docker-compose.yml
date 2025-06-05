@@ -1,0 +1,57 @@
+version: '3.8'
+services:
+  web:
+    build: .
+    command: poetry run gunicorn djproject.wsgi:application -b 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+      - worker
+  worker:
+    build: .
+    command: poetry run celery -A djproject worker -l info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+  beat:
+    build: .
+    command: poetry run celery -A djproject beat -l info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+  flower:
+    build: .
+    command: poetry run celery -A djproject flower
+    ports:
+      - "5555:5555"
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+  redis:
+    image: redis:alpine
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-celery_tasklog}
+      POSTGRES_USER: ${POSTGRES_USER:-celery_tasklog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-celery_tasklog}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
