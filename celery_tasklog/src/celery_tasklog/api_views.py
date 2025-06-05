@@ -6,17 +6,22 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from celery import current_app
 from django_celery_results.models import TaskResult
+from django.conf import settings
 from .models import TaskLogLine
 from .serializers import TaskListSerializer, TaskDetailSerializer, TaskLogLineSerializer
 import json
 import time
 import threading
 import logging
+import redis
 
 # Import the global SSE connections dictionary and lock from signals.py
 from .signals import sse_connections, sse_lock
 
 logger = logging.getLogger(__name__)
+
+# Redis client for streaming log updates
+redis_client = redis.Redis.from_url(settings.CELERY_BROKER_URL)
 
 
 class TaskListView(generics.ListAPIView):
@@ -200,13 +205,31 @@ def task_log_stream(request, task_id):
         logger.info(f"Starting SSE stream for task {task_id}")
         # Send initial connection message
         yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id})}\n\n".encode('utf-8')
-        
+
         # Register this connection
         connection_queue = queue.Queue()
+        pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
+        channel_name = f"tasklog:{task_id}"
+        pubsub.subscribe(channel_name)
+        stop_event = threading.Event()
+
+        def redis_listener():
+            for message in pubsub.listen():
+                if stop_event.is_set():
+                    break
+                if message.get('type') == 'message':
+                    try:
+                        data = json.loads(message['data'])
+                        connection_queue.put_nowait(data)
+                    except Exception as e:
+                        logger.error(f"Error processing pubsub message: {e}")
+
+        listener_thread = threading.Thread(target=redis_listener, daemon=True)
+        listener_thread.start()
         with sse_lock:
             if task_id not in sse_connections:
                 sse_connections[task_id] = []
-            
+
             # Create a queue for this connection
             sse_connections[task_id].append(connection_queue)
             logger.info(f"Registered new SSE connection for task {task_id}, connections: {len(sse_connections[task_id])}")
@@ -245,6 +268,12 @@ def task_log_stream(request, task_id):
         finally:
             # Clean up connection
             logger.info(f"Cleaning up SSE connection for task {task_id}")
+            stop_event.set()
+            try:
+                pubsub.close()
+            except Exception:
+                pass
+            listener_thread.join(timeout=1)
             with sse_lock:
                 if task_id in sse_connections:
                     try:

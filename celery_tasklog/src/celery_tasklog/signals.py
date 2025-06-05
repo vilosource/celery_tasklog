@@ -1,11 +1,16 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.conf import settings
 from .models import TaskLogLine
 import json
 import threading
 import logging
+import redis
 
 logger = logging.getLogger(__name__)
+
+# Redis client for broadcasting log lines
+redis_client = redis.Redis.from_url(settings.CELERY_BROKER_URL)
 
 # Global dictionary to store SSE connections per task
 # This needs to be imported in api_views.py
@@ -27,7 +32,13 @@ def broadcast_new_log(sender, instance, created, **kwargs):
             'message': instance.message,
             'task_id': instance.task_id
         }
-        
+
+        # Publish to Redis channel for real-time updates
+        try:
+            redis_client.publish(f"tasklog:{instance.task_id}", json.dumps(message))
+        except Exception as e:
+            logger.error(f"Redis publish failed for task {instance.task_id}: {e}")
+
         # Send to all connections for this task
         with sse_lock:
             logger.debug(f"Checking connections for task: {instance.task_id}. Active connections: {list(sse_connections.keys())}")
