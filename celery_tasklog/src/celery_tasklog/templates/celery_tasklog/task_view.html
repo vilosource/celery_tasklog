@@ -1,0 +1,5 @@
+<h1>Task {{ task_id }} Log</h1>
+<pre>
+{% for line in logs %}{{ line.timestamp }} [{{ line.stream }}] {{ line.message }}
+{% endfor %}
+</pre>
