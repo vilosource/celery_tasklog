@@ -5,35 +5,36 @@ This guide provides detailed instructions for migrating the Celery Terminal app 
 ## Project Structure
 
 ```
-celery-tasklog-project/
-├── pyproject.toml
-├── README.md
-├── djproject/                  # Main Django project
+celery_tasklog/
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+├── manage.py
+├── celery_tasklog/            # Installable package
+│   ├── pyproject.toml
+│   └── src/
+│       └── celery_tasklog/
+│           ├── __init__.py
+│           ├── apps.py
+│           ├── models.py
+│           ├── tasks.py
+│           ├── views.py
+│           ├── urls.py
+│           ├── api_views.py
+│           ├── serializers.py
+│           ├── middleware.py
+│           ├── admin.py
+│           └── templates/
+├── djproject/
 │   ├── settings.py
 │   ├── urls.py
-│   ├── asgi.py
-│   └── wsgi.py
-├── celery_tasklog/            # Installable package
-│   ├── pyproject.toml          # Package-specific config
-│   ├── src/
-│   │   └── celery_tasklog/     # Actual package code
-│   │       ├── __init__.py
-│   │       ├── tasks.py
-│   │       ├── models.py
-│   │       ├── apps.py
-│   │       ├── views.py
-│   │       ├── urls.py
-│   │       ├── middleware.py
-│   │       ├── admin.py
-│   │       ├── migrations/
-│   │       └── templates/
-│   └── tests/
-├── demo/                       # Demo app
-│   ├── __init__.py
+│   ├── celery.py
+│   └── ...
+├── demo/
 │   ├── tasks.py
 │   ├── views.py
 │   └── urls.py
-└── .envrc                      # Direnv configuration
+└── .envrc
 ```
 
 ## Step 1: Create Project Structure
@@ -349,34 +350,40 @@ poetry run python manage.py startapp demo
 
 ```python
 from celery import shared_task
-import time
+from celery_tasklog.tasks import TerminalLoggingTask
 
-@shared_task
-def long_running_task(seconds: int):
-    """
-    A demo task that runs for a specified number of seconds
-    """
-    for i in range(seconds):
-        print(f"Processing step {i+1}/{seconds}")
-        time.sleep(1)
-    return f"Completed {seconds} second task"
+@shared_task(base=TerminalLoggingTask, bind=True)
+def demo_long_task(self, duration=60):
+    print(f"Processing for {duration} seconds")
+
+@shared_task(base=TerminalLoggingTask, bind=True)
+def demo_failing_task(self):
+    print("About to fail")
+    raise Exception("Demo failure")
+
+@shared_task(base=TerminalLoggingTask, bind=True)
+def demo_quick_task(self):
+    print("Quick task done")
 ```
 
 ### Demo Views (demo/views.py)
 
 ```python
 from django.shortcuts import render
-from .tasks import long_running_task
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .tasks import demo_long_task, demo_failing_task, demo_quick_task
 
-def demo_view(request):
-    """
-    View to trigger demo tasks
-    """
-    if request.method == 'POST':
-        seconds = int(request.POST.get('seconds', 5))
-        long_running_task.delay(seconds)
-        return render(request, 'demo/demo_complete.html', {'seconds': seconds})
-    return render(request, 'demo/demo_form.html')
+def demo_home(request):
+    return render(request, 'demo/demo_home.html')
+
+def demo_task_detail(request, task_id):
+    return render(request, 'demo/demo_task_detail.html', {'task_id': task_id})
+
+@api_view(["POST"])
+def trigger_demo_task(request):
+    result = demo_long_task.delay()
+    return Response({'task_id': result.id})
 ```
 
 ### Demo URLs (demo/urls.py)
@@ -386,7 +393,9 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('', views.demo_view, name='demo'),
+    path('', views.demo_home, name='demo_home'),
+    path('task/<str:task_id>/', views.demo_task_detail, name='demo_task_detail'),
+    path('api/trigger-demo/', views.trigger_demo_task, name='trigger_demo_task'),
 ]
 ```
 
@@ -447,8 +456,12 @@ WSGI_APPLICATION = 'djproject.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('POSTGRES_DB', 'djproject_db'),
+        'USER': os.getenv('POSTGRES_USER', 'djproject_user'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'securepassword'),
+        'HOST': os.getenv('POSTGRES_HOST', 'postgres'),
+        'PORT': os.getenv('POSTGRES_PORT', '5432'),
     }
 }
 
@@ -464,12 +477,21 @@ STATIC_URL = '/static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Celery configuration
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
 CELERY_RESULT_BACKEND = 'django-db'
 
 # Celery Task Log settings
 CELERY_TASKLOG_ENABLED = True
 CELERY_TASKLOG_MAX_LINES = 1000
+CELERY_TASKLOG_RETENTION_DAYS = 30
+
+# Django REST framework
+REST_FRAMEWORK = {
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 50,
+    'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
+}
 ```
 
 ## Step 7: Set Up Direnv (.envrc)
@@ -624,6 +646,24 @@ volumes:
   postgres_data:
 ```
 
+## API and SSE Endpoints
+
+Include the package URLs in your project:
+
+```python
+path('tasklog/', include('celery_tasklog.urls'))
+```
+
+Available routes:
+
+- `/tasklog/api/tasks/` - list recent tasks with progress
+- `/tasklog/api/tasks/<task_id>/` - retrieve a single task with its logs
+- `/tasklog/sse/task/<task_id>/` - stream log lines via Server-Sent Events
+- `/tasklog/sse/test/` - simple test stream
+
+Log lines are broadcast from Celery workers to Redis using signals and
+relayed to connected SSE clients.
+
 ## Verification Steps
 
 1. Build and install the package:
@@ -650,8 +690,13 @@ poetry run python manage.py runserver
 
 5. Test with demo task:
 ```python
-from demo.tasks import long_running_task
-long_running_task.delay(5)
+from demo.tasks import demo_long_task
+demo_long_task.delay(5)
+```
+
+6. Verify SSE streaming:
+```bash
+python tests/test_sse_client.py
 ```
 
 ## Configuration Options
@@ -668,9 +713,10 @@ The package includes a middleware component that can be added to Django settings
 
 ## Additional Utilities
 
-- Task log cleanup management command
 - Admin interface for viewing task logs
 - Diagnostic views for troubleshooting
+- REST API endpoints for task status and logs
+- SSE endpoints for real-time log streaming
 
 ## Support
 
