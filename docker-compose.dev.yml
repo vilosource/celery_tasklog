@@ -1,10 +1,7 @@
-##
-# Docker Compose file for the Django project with Celery, Redis, and PostgreSQL
-# This is the production-ready docker-compose file. It uses a pre-built image and does not mount the source code as bind volumes.
-# During development, use the `docker-compose.dev.yml` file instead.
 ## 
-version: '3.8'
-##
+# The development docker compose. This mounts the source code as bind volumes so we don't have to keep 
+# rebuilding the image when we change the code.
+## 
 
 services:
   app:
