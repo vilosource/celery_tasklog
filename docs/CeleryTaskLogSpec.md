@@ -44,18 +44,21 @@ mkdir celery-tasklog-project
 cd celery-tasklog-project
 ```
 
-## Step 2: Initialize Poetry Project
+## Step 2: Set up Python environment
+
+The repository uses a regular virtual environment managed by `direnv`. Create
+the environment and install the requirements:
 
 ```bash
-poetry init
-# Add dependencies:
-poetry add django celery redis django-celery-results
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 ## Step 3: Set Up Django Project
 
 ```bash
-poetry run django-admin startproject djproject .
+django-admin startproject djproject .
 ```
 
 ## Step 4: Create Installable celery_tasklog Package
@@ -343,7 +346,7 @@ class Migration(migrations.Migration):
 
 ```bash
 cd ..
-poetry run python manage.py startapp demo
+python manage.py startapp demo
 ```
 
 ### Demo Tasks (demo/tasks.py)
@@ -497,7 +500,7 @@ REST_FRAMEWORK = {
 ## Step 7: Set Up Direnv (.envrc)
 
 ```bash
-echo "layout poetry" > .envrc
+echo "layout python3" > .envrc
 direnv allow
 ```
 
@@ -578,21 +581,20 @@ ENV PYTHONUNBUFFERED 1
 WORKDIR /app
 
 # Install dependencies
-COPY pyproject.toml poetry.lock /app/
-RUN pip install poetry
-RUN poetry install --no-root
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Copy project files
 COPY . /app/
 
 # Run database migrations
-RUN poetry run python manage.py migrate
+RUN python manage.py migrate
 
 # Expose port
 EXPOSE 8000
 
 # Start the server
-CMD ["poetry", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 ```
 
 ### docker-compose.yml
@@ -603,7 +605,7 @@ version: '3.8'
 services:
   web:
     build: .
-    command: poetry run python manage.py runserver 0.0.0.0:8000
+    command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
     ports:
@@ -614,7 +616,7 @@ services:
 
   worker:
     build: .
-    command: poetry run celery -A djproject worker --loglevel=info
+    command: celery -A djproject worker --loglevel=info
     volumes:
       - .:/app
     depends_on:
@@ -623,7 +625,7 @@ services:
 
   beat:
     build: .
-    command: poetry run celery -A djproject beat --loglevel=info
+    command: celery -A djproject beat --loglevel=info
     volumes:
       - .:/app
     depends_on:
@@ -675,17 +677,17 @@ pip install dist/celery_tasklog-*.whl
 
 2. Run migrations:
 ```bash
-poetry run python manage.py migrate
+python manage.py migrate
 ```
 
 3. Start Celery worker:
 ```bash
-poetry run celery -A djproject worker -l INFO
+celery -A djproject worker -l INFO
 ```
 
 4. Start Django server:
 ```bash
-poetry run python manage.py runserver
+python manage.py runserver
 ```
 
 5. Test with demo task:
