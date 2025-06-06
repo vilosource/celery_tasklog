@@ -146,7 +146,7 @@ version: '3.8'
 services:
   web:
     build: .
-    command: poetry run gunicorn djproject.wsgi:application -b 0.0.0.0:8000
+    command: gunicorn djproject.wsgi:application -b 0.0.0.0:8000
     volumes:
       - .:/app
     ports:
@@ -159,27 +159,46 @@ services:
       - worker
   worker:
     build: .
-    command: poetry run celery -A djproject worker -l info
+    command: celery -A djproject worker -l info
 ```
 (see `docker-compose.yml` for the full configuration).
 
 Environment variables are loaded from `.env`, keeping the project [12‑factor](https://12factor.net/) compliant.
 
+## Development environment
+
+The repository itself is not managed with Poetry. A standard Python virtual
+environment is used, typically controlled with `direnv`. Install the development
+dependencies with:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Only the installable app located in `celery_tasklog/` uses Poetry. Run `poetry
+build` inside that directory to produce a wheel file.
+
 ## Running locally
 
 1. Create a `.env` file with at least the PostgreSQL credentials used in `docker-compose.yml`.
-2. Build and start the stack:
+2. Build the images and start the stack using the provided Makefile:
    ```bash
-   docker compose up --build
+   make docker-build docker-up
    ```
 3. Access Flower at [http://localhost:5555](http://localhost:5555) and the Django site at [http://localhost:8000](http://localhost:8000).
+4. Stop the stack when finished:
+   ```bash
+   make docker-down
+   ```
 
 ## Linting
 
 Run `flake8` to check coding style:
 
 ```bash
-poetry run flake8
+python -m flake8
 ```
 
 ## Testing SSE
@@ -193,7 +212,11 @@ python tests/test_sse_client.py
 Enter the task ID when prompted to see events streamed from the server. Full automated tests are executed with `pytest`:
 
 ```bash
-poetry run pytest
+pytest
 ```
+
+The `tests/` directory provides unit tests for the log capture utilities. More
+advanced integration tests that depend on a running Celery worker and Redis are
+skipped by default.
 
 For more details see the full [CeleryTaskLogSpec](docs/CeleryTaskLogSpec.md).
